@@ -1,0 +1,14 @@
+-------------------------------------------------------------------------------
+--
+-- Script:	post_process.sql
+-- Purpose:	to post an Oracle process
+-- For:		8.1
+--
+-- Copyright:	(c) Ixora Pty Ltd
+-- Author:	Steve Adams
+--
+-- Synopsis:	@set_background  OR  @set_sid
+--		@post_process
+--
+-------------------------------------------------------------------------------
+oradebug wakeup &Pid

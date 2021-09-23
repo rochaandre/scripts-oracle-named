@@ -1,0 +1,65 @@
+#!/usr/bin/perl
+###############################################################################
+#
+# Synopsis:	perl buffers.pl [trace-file]
+# Purpose:	to print out the file#/block# of each buffer in LRU order
+#
+# Authors:	Yong Huang and Steve Adams
+#
+# Description:  This script reads a trace file containing a dump of the buffer
+#		headers at level 4. For example:
+#			oradebug dump buffers 4
+#		or
+#			alter session set events
+#			'immediate trace name buffers level 4';
+#		It prints out the file#/block# of each buffer in LRU order.
+#		This makes it relatively easy to see where new blocks are
+#		introduced to each buffer pool, and how the buffer aging works.
+#
+#		The trace file must not contain more than one dump,
+#		so each dump must be taken from a new session.
+#
+###############################################################################
+
+
+if (@ARGV) {
+  $trc = $ARGV[0];
+} else {
+  print STDERR "Trace file name: ";
+  chomp($trc = <>);
+}
+
+open TRC, "$trc" or die "Can't open the trace file.";
+while (<TRC>) {
+  if (/^\s\s\s\sBH #\d+ \(0x(\w+)\) file#: \d+ rdba: 0x\w{8} \((\d+\/\d+)\)/) {
+    $bh{$1} = $2;
+  }
+}
+close TRC;
+
+open TRC, "$trc" or die "Can't open the trace file.";
+while (<TRC>) {
+  print if (/^  .WS. /);
+  if (/^cold:/) {
+    s/^cold: (\w)+/  (WS)/;
+    print;
+  }
+  if (/NEXT_DIRECTION/ && ! /NULL/) {
+    s/ Queue.*//;
+    print;
+    $p = 1;
+    next;
+  }
+  if ($p && /=>/) {
+    chomp;
+    s/\r//;
+    foreach (split /=>/) {
+      s/^0//; 
+      printf "%10s", $bh{$_};
+    }
+    print "\n";
+  } else {
+    $p = 0;
+  }
+}
+close TRC;

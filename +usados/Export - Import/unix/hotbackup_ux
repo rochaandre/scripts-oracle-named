@@ -1,0 +1,356 @@
+##################################################################### 
+# PROGRAM NAME:	        hotbackup_ux                                  
+# AUTHOR: 		Raj Gutta                                     
+# PURPOSE: 		This utility will perform a warm backup of    
+#  		        the database
+# USAGE:		hotbackup_ux SID OWNER
+# INPUT PARAMETERS:
+#####################################################################
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_verify(): Verify that database is online               
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_verify(){
+  STATUS=`ps -fu ${ORA_OWNER} |grep -v grep| grep ora_pmon_${ORA_SID}`
+   funct_chk_ux_cmd_stat "Database is down for given SID($ORA_SID),Owner($ORA_OWNER). Can't perform hotbackup "
+} 
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_dblogmode(): Check DB log mode               
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_dblogmode(){
+STATUS=`${ORACLE_HOME}/bin/sqlplus -s <<EOF
+/ as sysdba
+set heading off   feedback off
+select log_mode from v\\$database;
+exit
+EOF`
+
+if [ $STATUS = "NOARCHIVELOG" ]; then
+   echo  "`date`" |tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+   echo "HOTBACKUP_FAIL: $ORA_SID is in NOARCHIVELOG mode. Can't perform hotbackup "  |tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+   exit 1
+fi
+}
+
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_control_backup():  Backup control file
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_control_backup(){
+echo  " Begin backup of controlfile and trace to trace file"  >> ${BACKUPLOGFILE}
+${ORACLE_HOME}/bin/sqlplus -s <<EOF
+/ as sysdba
+set heading off   feedback off
+alter database backup controlfile to '${CONTROLFILE_DIR}/backup_control.ctl';
+alter database backup controlfile to trace;
+exit
+EOF
+
+# Backup trace of control file
+CONTROL=`ls -t ${udump_dest}/*.trc |head -1`
+if [ ! -z "$CONTROL" ];  then
+  grep 'CONTROL' ${CONTROL} 1> /dev/null
+  if test $? -eq 0; then
+     cp ${CONTROL} ${CONTROLFILE_DIR}/backup_control.sql
+  fi
+fi  
+
+# Prepare restore file for control file
+echo "###### Control File   " >> ${RESTOREFILE}
+echo "# Use your own discretion to restore control file, not advised unless required..."  >> ${RESTOREFILE}
+echo  " End of backup of control file"  >> ${BACKUPLOGFILE}
+}
+
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_archivelog_backup():  Backup archivelog files
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_archivelog_backup(){
+echo  "Begin backup of archived redo logs" >> ${BACKUPLOGFILE}
+#Switch logs to flush current redo log to archived redo before back up
+${ORACLE_HOME}/bin/sqlplus -s <<EOF
+/ as sysdba
+set heading off   feedback off
+alter system switch logfile;
+alter system archive log stop;   
+exit
+EOF
+
+# This gets the redo sequence number that is being archived
+# and remove this from the list of files to be backed up
+ARCSEQ=`${ORACLE_HOME}/bin/sqlplus -s <<EOF
+/ as sysdba
+set heading off   feedback off
+select min(sequence#) from v\\$log
+where archived='NO';
+exit
+EOF`
+
+#Get current list of archived redo log files
+ARCLOG_FILES=`ls ${log_arch_dest}/*|grep -v $ARCSEQ`
+
+${ORACLE_HOME}/bin/sqlplus -s <<EOF
+/ as sysdba
+set heading off   feedback off
+alter system archive log start;   
+exit
+EOF
+
+#Prepare restore file for arc log files 
+echo "##### Archive Log Files" >> ${RESTOREFILE}
+for arc_file in `echo $ARCLOG_FILES`
+do
+     echo cp -p ${ARCLOG_DIR}/`echo $arc_file|awk -F"/" '{print $NF}'` $arc_file >> ${RESTOREFILE}
+done
+
+#Copy arc log files to backup location
+# And remove the archived redo logs from the log_archive_dest if copy is successful
+cp -p ${ARCLOG_FILES} ${ARCLOG_DIR}
+if [ $? = 0 ]; then
+   rm ${ARCLOG_FILES}
+else
+   echo  "`date`" |tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+   echo  "HOTBACKUP_FAIL:   Failed to copy Archive log files" |tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+   exit 1
+fi
+echo  "End backup of archived redo logs"  >> ${BACKUPLOGFILE}
+}
+
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_init_backup():  Backup init.ora file
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_init_backup(){
+
+#Copy current init<SID>.ora file to backup directory
+echo  " Copying current init${ORA_SID}.ora file"  >> ${BACKUPLOGFILE}
+cp -p ${init_file} ${INITFILE_DIR}/init${ORA_SID}.ora
+funct_chk_ux_cmd_stat  "Failed to copy init.ora file to backup location"
+
+# Prepare restore file for init.ora
+echo "############# Parameter Files" >> ${RESTOREFILE}
+echo cp -p ${INITFILE_DIR}/init${ORA_SID}.ora  ${init_file} >> ${RESTOREFILE}
+}
+
+
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_temp_backup():  Prepre SQL for temp files
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_temp_backup(){
+echo "############# Recreate the following Temporary Files" >> ${RESTOREFILE}
+${ORACLE_HOME}/bin/sqlplus -s <<EOF  >> ${RESTOREFILE}
+/ as sysdba
+set heading off   feedback off
+select 'alter tablespace '||tablespace_name||' add tempfile '||''''||file_name||''''||' reuse'||';'
+from dba_temp_files;
+exit
+EOF
+}
+
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_hot_backup():   Backup datafiles
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_hot_backup(){
+
+# Get the list of  tablespaces
+echo  "Building tablespace list " >> ${BACKUPLOGFILE}
+tablespace_list=`${ORACLE_HOME}/bin/sqlplus -s <<EOF
+/ as sysdba
+set heading off    feedback off
+select distinct tablespace_name from dba_data_files
+order by tablespace_name;
+exit
+EOF`
+
+echo "##### DATE:" `date` > ${RESTOREFILE}
+echo "###### Data Files( Please restore only corrupted files) " >> ${RESTOREFILE}
+for tblspace in `echo $tablespace_list`
+do
+# Get the datafiles for the current tablespace
+datafile_list=`${ORACLE_HOME}/bin/sqlplus -s <<EOF 
+/ as sysdba
+set heading off   feedback off
+select file_name from dba_data_files
+where tablespace_name = '${tblspace}';
+exit
+EOF`
+
+echo  " Beginning back up of tablespace ${tblspace}..."  >> ${BACKUPLOGFILE}
+${ORACLE_HOME}/bin/sqlplus -s <<EOF 
+/ as sysdba
+set heading off   feedback off
+alter tablespace ${tblspace} begin backup;
+exit
+EOF
+  
+# Copy datafiles of current tablespace
+for datafile in `echo $datafile_list`
+do
+      echo  "Copying datafile ${datafile}..." >> ${BACKUPLOGFILE}
+      # The next command prepares restore file
+      echo cp -p ${DATAFILE_DIR}/`echo $datafile|awk -F"/" '{print $NF}'` $datafile >> ${RESTOREFILE}
+      cp -p ${datafile} ${DATAFILE_DIR}
+      if [ $? != 0 ];  then
+            echo  "`date`" |tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+            echo  "HOTBACKUP_FAIL:  Failed to copy file to backup location "| tee -a ${BACKUPLOGFILE}  >> ${LOGFILE}
+
+            # Ending the tablespace backup before exiting
+           `${ORACLE_HOME}/bin/sqlplus -s <<EOF 
+            / as sysdba
+            set heading off    feedback off 
+            alter tablespace ${tblspace} end backup;
+            exit
+            EOF`
+
+            exit 1
+      fi
+done
+
+${ORACLE_HOME}/bin/sqlplus -s <<EOF 
+/ as sysdba
+set heading off   feedback off
+alter tablespace ${tblspace} end backup;
+exit
+EOF
+ echo  " Ending back up of  tablespace ${tblspace}.." >> ${BACKUPLOGFILE}
+done
+} 
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_parm(): Check for input parameters
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_parm() {
+if [ ${NARG} -ne 2 ]; then
+     echo "HOTBACKUP_FAIL: ${ORA_SID}, Not enough arguments passed"
+     exit 1
+fi
+} 
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_bkup_dir(): Create backup directories if not already existing
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_bkup_dir() {
+
+  RESTOREFILE_DIR="${BACKUPDIR}/restorefile_dir"
+  BACKUPLOG_DIR="${BACKUPDIR}/backuplog_dir"
+  DATAFILE_DIR="${BACKUPDIR}/datafile_dir"
+  CONTROLFILE_DIR="${BACKUPDIR}/controlfile_dir"
+  REDOLOG_DIR="${BACKUPDIR}/redolog_dir"
+  ARCLOG_DIR="${BACKUPDIR}/arclog_dir"
+  INITFILE_DIR="${BACKUPDIR}/initfile_dir"
+
+  BACKUPLOGFILE="${BACKUPLOG_DIR}/backup_log_${ORA_SID}"
+  RESTOREFILE="${RESTOREFILE_DIR}/restorefile_${ORA_SID}"
+  LOGFILE="${LOGDIR}/${ORA_SID}.log"
+
+  if  [ ! -d  ${RESTOREFILE_DIR} ]; then mkdir -p ${RESTOREFILE_DIR}; fi
+  if  [ ! -d  ${BACKUPLOG_DIR} ]; then  mkdir -p  ${BACKUPLOG_DIR}; fi
+  if  [ ! -d  ${DATAFILE_DIR} ]; then  mkdir -p  ${DATAFILE_DIR}; fi
+  if  [ ! -d  ${CONTROLFILE_DIR} ]; then  mkdir -p  ${CONTROLFILE_DIR}; fi
+  if  [ ! -d  ${REDOLOG_DIR} ]; then  mkdir -p  ${REDOLOG_DIR}; fi
+  if  [ ! -d  ${ARCLOG_DIR} ]; then  mkdir -p  ${ARCLOG_DIR}; fi
+  if  [ ! -d  ${INITFILE_DIR} ]; then  mkdir -p  ${INITFILE_DIR}; fi
+
+  if  [ ! -d  ${DYN_DIR} ]; then  mkdir -p  ${DYN_DIR}; fi
+  if  [ ! -d  ${LOGDIR} ]; then  mkdir -p  ${LOGDIR}; fi
+
+# Remove old backup
+rm -f ${RESTOREFILE_DIR}/*
+rm -f ${BACKUPLOG_DIR}/*
+rm -f ${DATAFILE_DIR}/*
+rm -f ${CONTROLFILE_DIR}/*
+rm -f ${REDOLOG_DIR}/*
+rm -f ${ARCLOG_DIR}/*
+rm -f ${INITFILE_DIR}/*
+
+echo  "--${JOBNAME}: hotbackup of ${ORA_SID} begun on `date +\"%c\"`" > ${BACKUPLOGFILE}
+}  
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_get_vars(): Get environment variables
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_get_vars(){
+
+ORA_HOME=`sed  /#/d  ${ORATABDIR}|grep -i  ${ORA_SID}|nawk -F ":"  '{print $2}'`
+ORA_BASE=`echo ${ORA_HOME}|nawk -F "/"  '{for (i=2; i<=NF-2; i++) print "/"$i}'`
+ORACLE_BASE=`echo $ORA_BASE|tr -d " "`
+init_file=$ORA_HOME/dbs/init$ORA_SID.ora
+#log_arch_dest1=`sed  /#/d  $init_file|grep -i  log_archive_dest|nawk -F "="  '{print $2}'`
+#log_arch_dest=`echo $log_arch_dest1|tr -d "'"|tr -d '"'`
+
+udump_dest=`${ORACLE_HOME}/bin/sqlplus -s <<EOF
+/ as sysdba
+set heading off    feedback off
+select value from v\\$parameter
+where name='user_dump_dest';
+exit
+EOF`
+
+if [ x$ORA_HOME = 'x' ]; then
+    echo "HOTBACKUP_FAIL: can't get ORACLE_HOME from oratab file for $ORA_SID" | tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+    exit 1
+fi
+
+if [ ! -f $init_file ]; then
+    echo "HOTBACKUP_FAIL: init$ORA_SID.ora does not exist in ORACLE_HOME/dbs" | tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+    exit 1
+fi
+
+if [ x$log_arch_dest = 'x' ]; then
+    echo "HOTBACKUP_FAIL: log_archive_dest not defined " | tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+    exit 1
+fi
+
+if [ x$udump_dest = 'x' ]; then
+    echo "HOTBACKUP_FAIL: user_dump_dest not defined " | tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+    exit 1
+fi
+
+ORACLE_HOME=${ORA_HOME}; export ORACLE_HOME
+ORACLE_SID=${ORA_SID}; export ORACLE_SID
+} 
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_ux_cmd_stat(): Check the exit status of Unix command
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_ux_cmd_stat() {
+ if [ $? != 0 ]; then
+            echo  "`date`" |tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+            echo  "HOTBACKUP_FAIL:  ${1}  "| tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+            exit 1
+ fi
+}  
+
+############################################################
+#                       MAIN                               
+############################################################
+
+NARG=$#
+ORA_SID=$1
+ORA_OWNER=$2
+
+# Set environment variables
+BACKUPDIR="/u02/${ORA_SID}/hot"
+ORATABDIR=/var/opt/oracle/oratab
+TOOLS="/u01/oracomn/admin/my_dba"
+log_arch_dest="/export/home/orcl/arch"
+
+DYN_DIR="${TOOLS}/DYN_FILES"       
+LOGDIR="${TOOLS}/localog"
+JOBNAME="dbhotbackup"
+
+echo " Starting hotbackup of ....  ${ORA_SID}" 
+
+        funct_chk_parm
+        funct_chk_bkup_dir
+        funct_get_vars
+        funct_verify
+        funct_chk_dblogmode
+        funct_hot_backup
+        funct_temp_backup
+        funct_control_backup
+        funct_archivelog_backup
+        funct_init_backup
+
+echo  "${ORA_SID}, hotbackup Completed successfully on `date +\"%c\"`" |tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+
+######## END MAIN  #########################
+

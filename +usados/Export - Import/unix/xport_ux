@@ -1,0 +1,139 @@
+#!/bin/ksh
+######################################################################
+# PROGRAM NAME: 	xport_ux                                         
+# PURPOSE: 		Performs export of the database
+# USAGE: 		xport_ux SID OWNER
+######################################################################
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_verify(): Verify that database is online               
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_verify(){
+  STATUS=`ps -fu ${ORA_OWNER} |grep -v grep| grep ora_pmon_${ORA_SID}`
+   funct_chk_unix_command_status  "Database is down for given SID($ORA_SID),Owner($ORA_OWNER). Can't perform export "
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_cleanup(): Cleanup interim files
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_cleanup() {
+echo "Left for user convenience" > /dev/null
+} 
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_build_parfile():  This will create parameter file
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_build_parfile() {
+# This line makes sure that it always creates a new parameter file
+echo " " >${PARFILE}
+echo "userid=system/manager">>${PARFILE}
+# if you use connect string. see next line.
+#userid=system/manager@${CON_STRING}
+#echo "Owner=scott">>${PARFILE}
+#echo "Fromuser=scott">>${PARFILE}
+#echo "Touser=king">>${PARFILE}
+#echo "Tables=scott.emp">>${PARFILE}
+echo "Full=Y">>${PARFILE}
+#echo "Direct=Y">>${PARFILE}
+echo "Grants=Y">>${PARFILE}
+echo "Indexes=Y">>${PARFILE}
+echo "Rows=Y">>${PARFILE}
+echo "Constraints=Y">>${PARFILE}
+echo "Compress=N">>${PARFILE}
+echo "Consistent=Y">>${PARFILE}
+echo "File=${FILE}">>${PARFILE}
+echo "Log=${EXPORT_DIR}/${ORA_SID}.exp.log">>${PARFILE}
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_export(): Export the database
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_export() {
+# Remove old export file
+rm -f  ${FILE}
+
+${ORACLE_HOME}/bin/exp parfile=${PARFILE}
+if [ $? != 0 ]; then
+      echo `date`  >> $LOGDIR/${ORA_SID}.log
+      echo "EXPORT_FAIL: ${ORA_SID}, Export Failed"  >> $LOGDIR/${ORA_SID}.log
+      funct_cleanup
+      exit 1
+fi 
+} 
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_parm(): Check for input parameters
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_parm() {
+if [ ${NARG} -ne 2 ]; then
+  echo "EXPORT_FAIL: ${ORA_SID}, Not enough arguments passed" 
+  exit 1
+fi
+} 
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_bkup_dir(): Create backup directories if not already exist
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_bkup_dir() {
+  EXPORT_DIR=${BACKUPDIR}
+  if  [ ! -d  ${EXPORT_DIR} ]; then  mkdir -p  ${EXPORT_DIR}; fi
+  if  [ ! -d  ${DYN_DIR} ]; then  mkdir -p  ${DYN_DIR}; fi
+  if  [ ! -d  ${LOGDIR} ]; then  mkdir -p  ${LOGDIR}; fi
+ 
+  FILE="${EXPORT_DIR}/${ORA_SID}.dmp"
+}  
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_get_vars(): Get environment variables
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_get_vars(){
+ORA_HOME=`sed  /#/d  ${ORATABDIR}|grep -i  ${ORA_SID}|nawk -F ":"  '{print $2}'`
+ORA_BASE=`echo ${ORA_HOME}|nawk -F "/"  '{for (i=2; i<=NF-2; i++) print "/"$i}'`
+ORACLE_BASE=`echo $ORA_BASE|tr -d " "`
+ORACLE_HOME=${ORA_HOME}; export ORACLE_HOME
+ORACLE_SID=${ORA_SID}; export ORACLE_SID
+#CON_STRING=${ORA_SID}.company.com
+} 
+      
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_unix_command_status(): Check exit status of Unix command
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_unix_command_status() {
+   if [ $? != 0 ];  then
+            echo  "`date`" >> ${LOGDIR}/${ORA_SID}.log
+            echo  "EXPORT_FAIL:  ${1}  "  >> ${LOGDIR}/${ORA_SID}.log
+            exit 1
+   fi
+} 
+
+#######################################
+#           MAIN
+#######################################
+
+NARG=$#
+ORA_SID=$1
+ORA_OWNER=$2
+
+# Set up the environment
+BACKUPDIR="/u02/${ORA_SID}/export"
+ORATABDIR=/etc/oratab 
+TOOLS="/u01/oracomn/admin/my_dba"
+
+DYN_DIR="${TOOLS}/DYN_FILES"
+PARFILE="${DYN_DIR}/export.par" 
+LOGDIR="${TOOLS}/localog"
+
+   echo "... Now exporting ....  ${ORA_SID}"
+
+        funct_chk_parm
+        funct_get_vars
+        funct_verify
+        funct_chk_bkup_dir
+        funct_build_parfile
+        funct_export
+        funct_cleanup
+        
+   echo `date`  >> $LOGDIR/${ORA_SID}.log
+   echo "${ORA_SID}, export completed successfully"  >> $LOGDIR/${ORA_SID}.log
+
+#######################  END MAIN ###############################

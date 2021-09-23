@@ -1,0 +1,158 @@
+#####################################################################
+# PROGRAM NAME: 	OraSoftware_ux                     		
+# PURPOSE: 		Backup ORACLE_HOME & ORACLE_BASE 
+# USAGE:		OraSoftware_ux  SID OWNER                  
+#####################################################################
+
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_verify_shutdown():  Verify that database is down
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_verify_shutdown(){
+  STATUS=`ps -fu ${ORA_OWNER} |grep -v grep| grep ora_pmon_${ORA_SID}`
+if [ $? = 0 ]; then
+    echo  "`date`" >> ${LOGFILE}
+    echo  "SOFTWAREBACKUP_FAIL: ${ORA_SID}, Database is up, can't do software backup if the database is online." |tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+    exit 1
+fi
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_shutdown_i(): Shutdown database in Immediate mode
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_shutdown_i(){
+${ORACLE_HOME}/bin/sqlplus -s << EOF
+/ as sysdba
+shutdown immediate;
+exit
+EOF
+} 
+
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_startup_n(): Startup database in normal mode
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_startup_n(){
+${ORACLE_HOME}/bin/sqlplus -s << EOF
+/ as sysdba
+startup; 
+exit
+EOF
+} 
+
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_software_bkup(): Backup software
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_software_bkup(){
+
+echo "tarring  ${ORA_HOME}" >> ${BACKUPLOGFILE}
+echo "tarring  ${ORA_BASE}" >> ${BACKUPLOGFILE}
+
+nohup tar cvlpf -  ${ORA_HOME} | compress > ${ORAHOMEFILE} 2> ${BACKUPLOGFILE}
+nohup tar cvlpf -  ${ORA_BASE} | compress > ${ORABASEFILE} 2> ${BACKUPLOGFILE}
+
+#Prepare restore file
+ echo "zcat ${ORAHOMEFILE}| tar xvlpf -  ${ORA_HOME}" > ${RESTOREFILE} 
+ echo "zcat ${ORABASEFILE}| tar xvlpf -  ${ORA_BASE}" >> ${RESTOREFILE}
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_parm():  Check for input parameters
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_parm() {
+if [ ${NARG} -ne 2 ]; then
+     echo "SOFTWAREBACKUP_FAIL: ${ORA_SID}, Not enough arguments passed"
+     exit 1
+fi
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_bkup_dir(): Create backup directories if not already exist
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_bkup_dir() {
+
+  RESTOREFILE_DIR="${BACKUPDIR}/restorefile_dir"
+  BACKUPLOG_DIR="${BACKUPDIR}/backuplog_dir"
+  SOFTWARE_DIR="${BACKUPDIR}/software_dir"
+
+  BACKUPLOGFILE="${BACKUPLOG_DIR}/backup_log_${ORA_SID}"
+  RESTOREFILE="${RESTOREFILE_DIR}/restorefile_${ORA_SID}"
+  ORAHOMEFILE="${SOFTWARE_DIR}/orahome_${ORA_SID}.tar.Z"
+  ORABASEFILE="${SOFTWARE_DIR}/orabase_${ORA_SID}.tar.Z"
+  LOGFILE="${LOGDIR}/${ORA_SID}.log"
+
+  if  [ ! -d  ${RESTOREFILE_DIR} ]; then mkdir -p ${RESTOREFILE_DIR}; fi
+  if  [ ! -d  ${BACKUPLOG_DIR} ]; then  mkdir -p  ${BACKUPLOG_DIR}; fi
+  if  [ ! -d  ${SOFTWARE_DIR} ]; then  mkdir -p  ${SOFTWARE_DIR}; fi
+
+  if  [ ! -d  ${DYN_DIR} ]; then  mkdir -p  ${DYN_DIR}; fi
+  if  [ ! -d  ${LOGDIR} ]; then  mkdir -p  ${LOGDIR}; fi
+
+# Remove old files
+rm -f ${RESTOREFILE_DIR}/*
+rm -f ${BACKUPLOG_DIR}/*
+rm -f ${SOFTWARE_DIR}/*
+
+echo  "${JOBNAME}: software backup of ${ORA_SID} begun on `date +\"%c\"` " >> ${BACKUPLOGFILE}
+}  
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_get_vars():  Get environment variables
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_get_vars(){
+ORA_HOME=`sed  /#/d  ${ORATABDIR}|grep -i  ${ORA_SID}|nawk -F ":"  '{print $2}'`
+ORA_BASE=`echo ${ORA_HOME}|nawk -F "/"  '{for (i=2; i<=NF-2; i++) print "/"$i}'`
+ORACLE_BASE=`echo $ORA_BASE|tr -d " "`
+init_file=$ORA_HOME/dbs/init$ORA_SID.ora
+ORACLE_HOME=${ORA_HOME}; export ORACLE_HOME
+ORACLE_SID=${ORA_SID}; export ORACLE_SID
+
+if [ x$ORA_HOME = 'x' ]; then
+    echo  "SOFTWAREBACKUP_FAIL: Can't get ORACLE_HOME from oratab for $ORA_SID"|tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+    exit 1
+fi
+
+if [ ! -f $init_file ]; then
+    echo  "SOFTWAREBACKUP_FAIL: int$ORA_SID.ora does not exist in ORACLE_HOME/dbs. Used by funct_startup_n to start database"|tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+    exit 1
+fi
+}  
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_unix_command_status(): Check the exit status of Unix command
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_unix_command_status() {
+ if [ $? != 0 ]; then
+    echo  "`date`" |tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+    echo  "SOFTWAREBACKUP_FAIL:  ${1}  "| tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+    exit 1
+ fi
+}  
+
+############################################################
+##                       MAIN                               
+#############################################################
+NARG=$#
+ORA_SID=$1
+ORA_OWNER=$2
+
+# Set environment variables 
+BACKUPDIR="/u02/${ORA_SID}/software"  
+ORATABDIR=/var/opt/oracle/oratab
+TOOLS="/u01/oracomn/admin/my_dba"
+
+DYN_DIR="${TOOLS}/DYN_FILES"
+LOGDIR="${TOOLS}/localog"
+JOBNAME="orasoftware"
+
+echo "Preparing to make software backup of ${ORA_SID}" 
+
+        funct_chk_parm
+        funct_chk_bkup_dir        
+        funct_get_vars
+        funct_shutdown_i
+        funct_verify_shutdown
+        funct_software_bkup
+        funct_startup_n
+echo  "${ORA_SID}, Software Backup Completed successfully on `date +\"%c\"` " |tee -a ${BACKUPLOGFILE} >> ${LOGFILE}
+
+######## END MAIN  #########################
+

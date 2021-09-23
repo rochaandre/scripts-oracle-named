@@ -1,0 +1,155 @@
+#!/bin/ksh
+######################################################################
+# PROGRAM NAME: 	splitZmport_ux                                         
+# PURPOSE: 		Performs import of the database 
+#                       Uncompresses the dump file on the fly while desplitting.
+# USAGE: 		splitZmport_ux SID OWNER
+# imp help=Y (for help on import)
+######################################################################
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_verify():  Verify that database is online               
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_verify(){
+  STATUS=`ps -fu ${ORA_OWNER} |grep -v grep| grep ora_pmon_${ORA_SID}`
+   funct_chk_unix_command_status  "Database is down for given SID($ORA_SID),Owner($ORA_OWNER). Can't perform impot"
+} 
+
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_cleanup():  Cleanup interim files
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_cleanup() {
+ rm -f ${PIPE_DEVICE}
+ rm -f ${SPLIT_PIPE_DEVICE}
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_desplitcompress_pipe(): Creates pipe for uncompressing and desplitting of file
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_desplitcompress_pipe() {
+# Creates pipe for uncompressing
+if [ ! -r ${PIPE_DEVICE} ]; then          
+   /etc/mknod  ${PIPE_DEVICE} p
+fi
+
+#Creates pipe for desplitting 
+if [ ! -r ${SPLIT_PIPE_DEVICE} ]; then          
+     /etc/mknod  ${SPLIT_PIPE_DEVICE} p
+fi
+
+nohup cat  ${ZFILES} > ${SPLIT_PIPE_DEVICE} & 
+sleep 5
+nohup uncompress < ${SPLIT_PIPE_DEVICE}  >${PIPE_DEVICE} & 
+sleep 30
+} 
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_build_parfile(): Creates parameter file
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_build_parfile() {
+# This line makes sure that it always creates a new parameter file
+echo " " >${PARFILE}
+echo "userid=system/manager">>${PARFILE}
+#echo "indexfile=${BACKUPDIR}/${ORA_SID}.ddl">>${PARFILE}
+#echo "Owner=scott">>${PARFILE}
+#echo "Fromuser=kishan">>${PARFILE}
+#echo "Touser=aravind">>${PARFILE}
+#echo "Tables=T1,T2,t3,t4">>${PARFILE}
+echo "Full=Y">>${PARFILE}
+echo "Ignore=Y">>${PARFILE}
+echo "Commit=y">>${PARFILE}
+echo "File=${PIPE_DEVICE}">>${PARFILE}
+echo "Log=${BACKUPDIR}/${ORA_SID}.imp.log">>${PARFILE}
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_import(): Import the database
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_import() {
+${ORACLE_HOME}/bin/imp parfile=${PARFILE}
+if [ $? != 0 ]; then
+      echo `date`  >> $LOGDIR/${ORA_SID}.log
+      echo "IMPORT_FAIL: ${ORA_SID}, Import Failed"  >> $LOGDIR/${ORA_SID}.log
+      funct_cleanup
+      exit 1
+fi 
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_parm(): Check for input parameters
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_parm() {
+if [ ${NARG} -ne 2 ]; then
+  echo "IMPORT_FAIL: ${ORA_SID}, Not enough arguments passed" 
+  exit 1
+fi
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_bkup_dir(): Check for backup directories
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_bkup_dir() {
+   if [ ! -d ${DYN_DIR} ]; then mkdir -p ${DYN_DIR}; fi
+   if [ ! -d ${LOGDIR} ]; then mkdir -p ${LOGDIR}; fi
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_get_vars(): Get environment variables
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_get_vars(){
+ORA_HOME=`sed  /#/d  ${ORATABDIR}|grep -i  ${ORA_SID}|nawk -F ":"  '{print $2}'`
+ORA_BASE=`echo ${ORA_HOME}|nawk -F "/"  '{for (i=2; i<=NF-2; i++) print "/"$i}'`
+ORACLE_BASE=`echo $ORA_BASE|tr -d " "`
+ORACLE_HOME=${ORA_HOME}; export ORACLE_HOME
+ORACLE_SID=${ORA_SID}; export ORACLE_SID
+} 
+      
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_unix_command_status(): Check exit status of Unix command
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_unix_command_status() {
+   if [ $? != 0 ]; then
+            echo  "`date`" >> ${LOGDIR}/${ORA_SID}.log
+            echo  "IMPORT_FAIL:  ${1}  "  >> ${LOGDIR}/${ORA_SID}.log
+            exit 1
+   fi
+}  
+
+#######################################
+#           MAIN
+#######################################
+NARG=$#
+ORA_SID=$1
+ORA_OWNER=$2
+
+# Set up environment
+BACKUPDIR="/u02/${ORA_SID}/export"
+ORATABDIR=/etc/oratab 
+TOOLS="/u01/oracomn/admin/my_dba"
+# List all split files in ZFILES variable
+#ZFILES=`echo ${BACKUPDIR}/file.dmp.Z??|sort`
+ZFILES="${BACKUPDIR}/file.dmp.Zaa  ${BACKUPDIR}/file.dmp.Zab"  
+
+DYN_DIR="${TOOLS}/DYN_FILES"
+PARFILE="${DYN_DIR}/import.par" 
+LOGDIR="${TOOLS}/localog"
+
+PIPE_DEVICE="/tmp/import_${ORA_SID}_pipe"
+SPLIT_PIPE_DEVICE="/tmp/split_${ORA_SID}_pipe"
+
+   echo "... Now importing ....  ${ORA_SID}"
+
+        funct_chk_parm
+        funct_get_vars
+        funct_verify
+        funct_chk_bkup_dir
+        funct_desplitcompress_pipe
+        funct_build_parfile
+        funct_import
+        funct_cleanup
+        
+   echo `date`  >> $LOGDIR/${ORA_SID}.log
+   echo "${ORA_SID}, import completed successfully"  >> $LOGDIR/${ORA_SID}.log
+
+#######################  END MAIN ###############################

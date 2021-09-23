@@ -1,0 +1,152 @@
+1- Registrar a instância (ORADIM) Utilize a Senha ORACLE
+
+   ORADIM -NEW -SID DBvendas -INTPWD oracle -STARTMODE a -PFILE C:\oracle\admin\dbvendas\pfile\initdbvendas.ora
+
+2- Criar as estruturas de diretório e criar o init.ora
+   C:\oracle\ora92\dbs ou outro init já existente
+   C:\oracle\admin\dbtest\pfile
+
+   Estruturas que deverão ser criadas:
+   C:\oracle\admin\dbvendas\bdump
+   C:\oracle\admin\dbvendas\cdump
+   C:\oracle\admin\dbvendas\udump
+   C:\oracle\admin\dbvendas\pfile
+   C:\oracle\oradata\dbvendas
+
+   Não se esqueça de renomear o arquivo init, ele deve ter o mesmo nome e caminho que vc utilizou no ORADIM. 
+   (C:\oracle\admin\dbvendas\pfile\initdbvendas.ora)
+
+3- Altere os parametros do arquivo init.ora
+   control_files=("C:\oracle\oradata\dbvendas\CONTROL01.CTL", 
+                  "C:\oracle\oradata\dbvendas\CONTROL02.CTL", 
+                  "C:\oracle\oradata\dbvendas\CONTROL03.CTL")
+
+   background_dump_dest=C:\oracle\admin\dbvendas\bdump
+   core_dump_dest=C:\oracle\admin\dbvendas\cdump
+   user_dump_dest=C:\oracle\admin\dbvendas\udump
+
+   instance_name=dbvendas -> deve ser  mesmo nome que vc colocou no ORADIM
+   db_name=dbvendas
+
+   Salve o arquivo init.ora
+
+4- No sistema operacional, informe as variáveis ORACLE_SID e ORACLE_HOME
+   c:\> set ORACLE_SID=dbvendas
+   c:\> set ORACLE_HOME=c:\oracle\ora92
+
+   para confirmar se as variáveis foram setadas corretamente para consultar o conteúdo de cada uma utilize o comando ECHO
+   c:\> echo %ORACLE_SID%
+   c:\> echo %ORACLE_HOME%
+
+5-Acesse o sqlplus. Lembre-se de acessar com privégio sysdba
+    c:\> sqlplus sys as sysdba
+         senha: oracle
+6- Realize o starup do banco em modo nomount
+   SQL> startup nomount pfile = C:\oracle\admin\dbvendas\pfile\initdbvendas.ora
+
+
+7- Crie o Banco de Dados => CREATE DABASE
+
+   SQL> CREATE DATABASE dbvendas
+        MAXLOGFILES 32
+        MAXLOGMEMBERS 5
+        MAXLOGHISTORY 100
+        MAXDATAFILES 100
+     LOGFILE
+        GROUP 1 'C:\ORACLE\ora92\ORADATA\DBvendas\REDO01.LOG'  SIZE 1M reuse,
+        GROUP 2 'C:\ORACLE\ora92\ORADATA\DBvendas\REDO02.LOG'  SIZE 1M reuse,
+        GROUP 3 'C:\ORACLE\ora92\ORADATA\DBvendas\REDO03.LOG'  SIZE 1M reuse
+     DATAFILE
+       'C:\ORACLE\ora92\ORADATA\dbvendas\SYSTEM01.DBF' SIZE 2m reuse AUTOEXTEND ON
+     DEFAULT TEMPORARY TABLESPACE TEMP TEMPFILE 
+       'C:\oracle\ora92\ORADATA\dbvendas\temp01.dbf' SIZE 10M reuse
+     UNDO TABLESPACE 
+        UNDOTBS1 DATAFILE 'C:\ORACLE\ora92\ORADATA\dbvendas\UNDOTBS101.dbf'size 10M reuse
+     CHARACTER SET WE8MSWIN1252
+     NATIONAL CHARACTER SET AL16UTF16;
+
+   OBS: Podemos notar a criação dos arquivos do banco de dados acessando o diretório:
+   C:\ORACLE\ORADATA\DBvendas\
+
+8- Após receber a mensagem "Banco de dados criado." devemos criar o Dicionário de dados. Para criarmos o dicionário de dados
+devemos executar os scripts: catalog.sql e catproc.sql
+OBS: para executar um script no SQL utilize o @ seguido do caminho em que se encontram os script. Não há a necessidade
+de informar o .sql
+
+    SQL> @c:\oracle\ora92\rdbms\admin\catalog
+    SQL> @c:\oracle\ora92\rdbms\admin\catproc
+
+9- Agora para tornarmos o banco de dados diponível para os usuário devemos configurar ou "ouvinte" LISTENER.ORA
+   Edite o arquivo C:\oracle\ora92\network\ADMIN\listener.ora. Adicione a partir da última linha os parametros.
+ 
+   DICA: se existir uma entrada semelhante dentro do arquivo copie e cole e altere o parâmtro SID_NAME
+
+   SID_LIST_LISTENER =
+     (SID_LIST =
+       (SID_DESC =
+         (SID_NAME = DBvendas)
+         (ORACLE_HOME = C:\oracle\ora92)
+       )
+     )
+
+   DICA: se existir uma entrada semelhante dentro do arquivo copie e cole e altere o parâmtro SID_NAME
+
+10- Para que os clientes possam utilizar o banco de dados o arquivo TNSNAMES.ORA deve conter a chamada para o banco.
+    Edite o arquivo C:\oracle\ora92\network\ADMIN\tnsnames.ora. Adicione a partir da última linha os parametros.
+
+    DICA: se existir uma entrada semelhante dentro do arquivo copie e cole e altere o parâmtro SID
+
+   DBvendas =
+     (DESCRIPTION =
+       (ADDRESS_LIST =
+          (ADDRESS = (PROTOCOL = TCP)(HOST = 201.6.225.148)(PORT = 1521))
+       )
+       (CONNECT_DATA =
+         (SID = DBvendas)
+       )
+     )
+
+11- Vá para o modo de comandos e reinicie o servico do lister
+   c:\> lsnrctl stop
+   c:\> lsnrctl start
+
+12- Para testarmos o listener devemos executar o seguinte comando
+   c:\> sqlplusw system@dbvendas
+   senha: manager
+   
+
+Colocando o Banco em Modo de Arquivamento "Archive Mode"
+
+1- Adicione as seguintes linhas no init.ora
+   C:\oracle\admin\dbvendas\pfile\initdbvendas.ora
+
+   OBS: Esta linhas poderão ser adicionadas em qualquer parte do arquivo. A sugestão é colocar no final do arquivo.
+
+###########################################
+# Archive
+###########################################
+log_archive_start  = true
+log_archive_dest_1="location=C:\oracle\admin\dbvendas\archive reopen=60"
+log_archive_dest_state_1 = enable
+log_archive_format = DBvendas_%t_%s.arc
+
+2- Derrube o banco de dados
+   SQL> shutdown immediate
+
+3- Realize o startup do banco no modo MOUNT
+   SQL> startup mount pfile = C:\oracle\admin\dbvendas\pfile\initdbvendas.ora
+
+4- O banco deverá ser colocado em modo de arquivamento, para isso digito o comando:
+   SQL> alter database archivelog; 
+         ALTER SYSTEM ARCHIVE LOG START; 
+
+5- Para Verificar se o banco encontra-se em mode de arquivamento, digite o comando:
+   SQL> archive log list;
+
+6- Abra o banco de dados
+   alter system open database
+
+
+
+
+

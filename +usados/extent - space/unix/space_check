@@ -1,0 +1,118 @@
+################################################################
+# Prog Name:  space_check
+# Purpose:    Checks for tablespaces which are used beyond given 
+#             threshold limit
+# Usage:      space_check  TBSUSED
+##################################################################
+
+#:::::::::::::::::::::::
+# funct_TBSspacecheck(): Check space for each Tablespace
+#::::::::::::::::::::::::
+funct_TBSspacecheck(){
+${ORACLE_HOME}/bin/sqlplus -s <<EOF >${DYN_DIR}/TBS
+/ as sysdba
+set heading off  feedback off
+create or replace view temprpt_free as select tablespace_name,sum(bytes) free
+from dba_free_space
+group by tablespace_name;
+
+create or replace view temprpt_bytes as
+select tablespace_name,sum(bytes) bytes
+from dba_data_files
+group by tablespace_name;
+
+create or replace view temprpt_status as
+select a.tablespace_name,free,bytes
+from temprpt_bytes a,temprpt_free b
+where a.tablespace_name=b.tablespace_name(+);
+
+create or replace view temprpt_trouble as select  tablespace_name,
+        round(bytes/(1024*1024),1)                   Size_Mb,
+        round(nvl(bytes-free,bytes)/(1024*1024),1)   Used_Mb,
+        round(nvl(free,0)/(1024*1024),1)             Free_Mb,
+        round(nvl(100*(bytes-free)/bytes,100),1)     Used_pct
+from temprpt_status;
+
+select  'TableSpace:'||ltrim(rtrim(tablespace_name))||','||
+        'Size(Mb):'||Size_Mb||','||
+        'Used(Mb):'||Used_Mb||','||
+        'Free(Mb):'||Free_Mb||','||
+        '%Used:'||Used_pct
+from temprpt_trouble
+where Used_pct >= ${TBSUSED};
+exit
+EOF
+
+for i  in `awk '{print $0}' ${DYN_DIR}/TBS`
+do
+  echo "TABLESPACE_THRESHOLD_FAIL: ${ORA_SID}, ${i}" >> ${LOGFILE}
+done
+} 
+
+#::::::::::::::::::::::::::::::
+# funct_chk_bkup_dir(): Create directories if not already exist
+#::::::::::::::::::::::::::::::
+funct_chk_bkup_dir() {
+
+  LOGFILE="${LOGDIR}/${ORA_SID}.log"
+
+  if  [ ! -d  ${DYN_DIR} ]; then  mkdir -p  ${DYN_DIR}; fi
+  if  [ ! -d  ${LOGDIR} ]; then  mkdir -p  ${LOGDIR}; fi
+
+  echo `date` >> ${LOGFILE}
+  echo "Checking ${ORA_SID} for tablespaces which are used ${TBSUSED}% or above" >> ${LOGFILE}
+}  
+
+#::::::::::::::::::::::::::::::
+# funct_chk_parm():  Check for input parameters
+#::::::::::::::::::::::::::::::
+funct_chk_parm() {
+if [ ${NARG} -ne 1 ]; then
+     echo "TABLESPACE_THRESHOLD_FAIL: Not enough argements passed"
+     exit 1
+fi
+}
+
+#:::::::::::::::::::::::::
+#funct_cleanup(): Cleanup activities
+#:::::::::::::::::::::::::
+funct_cleanup(){
+rm -f ${DYN_DIR}/TBS
+} 
+
+
+#::::::::::::::::::::::::::
+#  Main
+#::::::::::::::::::::::::::
+NARG=$#
+TBSUSED=$1
+
+# Set up the environment
+ORATABDIR=/etc/oratab
+TOOLS="/u01/oracomn/admin/my_dba"
+
+DYN_DIR="${TOOLS}/DYN_FILES"
+LOGDIR="${TOOLS}/localog"
+
+
+for ORA_SID in `sed /#/d ${ORATABDIR}|awk -F:  '{print $1}'`
+do
+  ORA_HOME=`sed /#/d ${ORATABDIR}|grep $ORA_SID|awk -F: '{print $2}'`
+  ORACLE_SID=${ORA_SID}; export ORACLE_SID
+  ORACLE_HOME=${ORA_HOME}; export ORACLE_HOME
+
+  funct_chk_parm
+  funct_chk_bkup_dir
+
+  STATUS=`ps -ef | grep -v grep | grep ora_pmon_${ORA_SID}`
+  if [ $? != 0 ]; then
+     echo "DATABASE_DOWN: Can't check tablespace usage for ${ORA_SID}"  >> ${LOGFILE}
+  else
+     funct_TBSspacecheck
+     funct_cleanup
+  fi
+done
+
+#:::::::::::::: END MAIN :::::::::::::::::::::::::::::
+
+

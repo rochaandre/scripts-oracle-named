@@ -1,0 +1,4 @@
+select substr(USERNAME,1,10) USERNAME,SID,SERIAL#,OSUSER,TERMINAL,SEGMENT_NAME  
+from v$transaction,dba_rollback_segs,v$session         
+where SADDR=SES_ADDR and XIDUSN=SEGMENT_ID
+/

@@ -1,0 +1,101 @@
+##############################################################################
+#
+# Synopsis:	exp_split_ftp.sh export_name user@destination_host:/pathname
+# Purpose:	to split an export into multiple files and then ftp them away
+#
+# Copyright:	(c) Ixora Pty Ltd
+# Author:	Steve Adams
+#
+# Description:	This script uses the standard method of exporting to a named
+#		pipe which is read by compress. However, instead of writing
+#		to a file, compress pipes its output to split which splits
+#		the export file into 10M chunks.
+#
+#		Then to ensure that we do not run out of space in the local
+#		export file system, we ftp the files as they become available
+#		to the destination system.
+#
+#		An export parameter file must exist, name export_name.par.
+#
+##############################################################################
+
+# get arguments
+#
+[[ $# -eq 2 && $2 = *@*:/* ]] ||
+exec echo "Usage: exp_split_ftp.sh export_name user@dest_host:/pathname"
+exp_name=$1
+user=${2%%@*}
+destpath=${2##*:}
+desthost=${2%%:*}
+desthost=${desthost##*@}
+
+# basic checks
+#
+[[ -r $exp_name.par ]] ||
+exec echo "Parameter file $exp_name.par does not exist."
+files=$(echo $exp_name-*)
+[[ $files = $exp_name-\* ]] ||
+exec echo "Some $exp_name-* files already exist."
+
+# get ftp password
+#
+print "Please enter password for $user on $desthost."
+stty -echo
+read password?"Password: "
+print
+stty echo
+
+# protect us from signals
+#
+trap "" 1 2 3 15
+
+# log output to file
+#
+exec >> exp_split_ftp.log 2>&1
+
+# create named pipe for export
+#
+mknod $exp_name.dmp p
+
+# start pipeline to compress and split
+#
+compress < $exp_name.dmp |
+split -b 10m - $exp_name- &
+pipe_pid=$!
+
+# start process to wait for files to transfer
+#
+while :
+do
+    # get a list of files that are ready
+    # (don't do last file if pipeline is still alive)
+    #
+    ready=$(echo _ $exp_name-*)
+    kill -0 $pipe_pid 2>/dev/null &&
+    ready=${ready% *}
+    ready=${ready#_}
+
+    # if there are any files ready,
+    # start a transfer process for each file
+    #
+    [[ -n $ready ]] &&
+    for file in $ready
+    do
+        print "
+        user $user \"$password\"
+        binary
+        cd $destpath
+        put $file
+        bye" |
+        ftp -nvi $desthost 2>&1 |
+        grep -v "^150 " |
+        egrep -q "fail|error|incorrect|denied|unknown|timed out" ||
+	rm -f $file
+    done
+    kill -0 $pipe_pid 2>/dev/null || exit 0
+    sleep 15
+done &
+
+# and here is the export itself
+#
+exp file=$exp_name.dmp parfile=$exp_name.par &

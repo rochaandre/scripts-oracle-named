@@ -1,0 +1,166 @@
+#####################################
+#PROGRAM:  arc_monitor
+#FUNCTION: If archive used space is beyond given limit, backup 
+#          archive log files and delete them
+#USAGE:    arc_monitor SID ARC_DIR  BACK_DIR PCT_USED
+#####################################
+
+#::::::::::::::::::::::::::::::
+# funct_chk_parm(): Check for input parameters
+#::::::::::::::::::::::::::::::
+funct_chk_parm() {
+if [ ${NARG} -ne 4 ]; then
+  echo "ARCHIVE_BACKUP_FAIL: Not enough arguments passed" 
+  exit 1
+fi
+} 
+
+#::::::::::::::::::::::::::::::
+# funct_chk_dblogmode(): Check DB log mode
+#::::::::::::::::::::::::::::::
+funct_chk_dblogmode(){
+STATUS=`${ORACLE_HOME}/bin/sqlplus -s <<EOF
+/ as sysdba
+set heading off  feedback off
+select log_mode from v\\$database;
+exit
+EOF`
+
+if [ $STATUS = "NOARCHIVELOG" ]; then
+  echo "ARCHIVE_BACKUP_FAIL: $ORA_SID Database is in NOARCHIVELOG mode. Can't perform archiving" >> $LOGFILE
+  exit 1
+fi
+} 
+
+#::::::::::::::::::::::::::::::
+# funct_chk_space(): Check for threshold on source file system
+#::::::::::::::::::::::::::::::
+funct_chk_space(){ 
+# for Sun Solaris
+#df -k ${ARC_DIR}|tail -1|awk -F" " '{print $5}'|sed s/%//
+# for AIX
+#df -k ${ARC_DIR}|awk -F" " '{print int($4)}'
+# for HP-UX
+#USED=`bdf ${ARC_DIR}|tail -1|awk -F" " '{print $5}'|sed s/%//`
+
+  USED=`df -k ${ARC_DIR}|tail -1|awk -F" " '{print $5}'|sed s/%//`
+  if [ ${USED} -le  ${USER_USED} ]; then
+    exit 1
+  fi
+}
+
+
+#::::::::::::::::::::::::::::::
+# funct_chk_bkup_dir(): Check directories 
+#::::::::::::::::::::::::::::::
+funct_chk_bkup_dir() {
+
+  LOGFILE="${LOGDIR}/${ORA_SID}.log"
+  BACK_FILE="${BACK_DIR}/arc_${ORA_SID}_TAR"
+  ARC_FILE="${ARC_DIR}/*"
+
+  if  [ ! -d  ${DYN_DIR} ]; then  mkdir -p  ${DYN_DIR}; fi
+  if  [ ! -d  ${LOGDIR} ]; then  mkdir -p  ${LOGDIR}; fi
+
+  if  [ ! -d ${ARC_DIR} -o ! -d ${BACK_DIR} ]; then
+    echo `date` >> ${LOGFILE}
+    echo "ARCHIVE_BACKUP_FAIL: Source or Destination directory does not exist" >> ${LOGFILE}
+    exit 1
+  fi
+}  
+
+#::::::::::::::::::::::::::::::
+#funct_arc_stop(): Stops Archive Log
+#::::::::::::::::::::::::::::::
+funct_arc_stop(){
+${ORACLE_HOME}/bin/sqlplus -s <<EOF
+/ as sysdba
+set heading off  feedback off
+alter system archive log stop;
+exit
+EOF
+} 
+
+
+#::::::::::::::::::::::::::::::
+#funct_arc_start(): Starts Archive Log
+#::::::::::::::::::::::::::::::
+funct_arc_start(){
+${ORACLE_HOME}/bin/sqlplus -s <<EOF
+/ as sysdba
+set heading off  feedback off
+alter system archive log start;
+exit
+EOF
+} 
+
+
+#::::::::::::::::::::::::::::::
+# funct_arc_tar(): 'tar' archive files
+#::::::::::::::::::::::::::::::
+funct_arc_tar(){
+
+# Check for any files to archive
+if [ ! -f ${ARC_FILE} ]; then
+  echo "No files to archive " >> ${LOGFILE}
+  exit 1
+fi
+
+# Move previous file to old file if exist
+if [ -f ${BACK_FILE}.Z ]; then
+   mv ${BACK_FILE}.Z ${BACK_FILE}_old.Z
+fi
+
+# 'tar' archive files
+tar -cvf ${BACK_FILE}  ${ARC_FILE} 
+if [ $? != 0 ]; then
+  echo `date` >> ${LOGFILE}
+  echo "ARCHIVE_BACKUP_FAIL: Can't create archive tar file " >> ${LOGFILE}
+  exit 1
+fi
+
+# Compress the file and delete archive files
+if [ -f ${BACK_FILE} ]; then
+  compress ${BACK_FILE}
+  rm -f ${ARC_FILE}
+else
+  echo `date` >> ${LOGFILE}
+  echo "ARCHIVE_BACKUP_FAIL: Can't find archive tar file" >> ${LOGFILE}
+ exit 1
+fi
+}
+
+
+#::::::::::::::::::::::::::
+#  Main
+#::::::::::::::::::::::::::
+NARG=$#
+ORA_SID=$1
+ARC_DIR=$2
+BACK_DIR=$3
+USER_USED=$4
+
+# Set up the environment
+ORATABDIR=/etc/oratab
+TOOLS="/u01/oracomn/admin/my_dba"
+
+DYN_DIR="${TOOLS}/DYN_FILES"
+LOGDIR="${TOOLS}/localog"
+
+ORA_HOME=`sed /#/d ${ORATABDIR}|grep $ORA_SID|awk -F: '{print $2}'`
+ORACLE_SID=${ORA_SID}; export ORACLE_SID
+ORACLE_HOME=${ORA_HOME}; export ORACLE_HOME
+
+	funct_chk_parm
+	funct_chk_bkup_dir
+        funct_chk_space
+        funct_chk_dblogmode
+	funct_arc_stop
+	funct_arc_tar
+	funct_arc_start
+
+    echo `date` >> ${LOGFILE}
+    echo "Archive backup completed successfully" >> ${LOGFILE}
+
+#:::::::::::::: END MAIN :::::::::::::::::::::::::::::
+

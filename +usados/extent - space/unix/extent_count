@@ -1,0 +1,93 @@
+################################################################
+# Prog Name:  extent_count
+# Purpose:    Checks for segments which are extended beyond 
+#             given number of extents
+# Usage:      $extent_count  ECOUNT
+##################################################################
+
+#:::::::::::::::::::::::
+#funct_extentcount(): Check threshold of extents for each segment
+#::::::::::::::::::::::::
+funct_extentcount(){
+${ORACLE_HOME}/bin/sqlplus -s <<EOF >${DYN_DIR}/EXTENT_COUNT
+/ as sysdba
+set heading off  feedback off
+select 'Owner:'||ltrim(rtrim(owner))||','||'Name:'||ltrim(rtrim(segment_name))||','||\
+        'Type:'||ltrim(rtrim(segment_type))||','||'Tablespace:'||ltrim(rtrim(tablespace_name))
+from dba_segments
+where extents > ${ECOUNT}
+and owner not in('SYS','SYSTEM');
+exit
+EOF
+
+for i  in `awk  '{print $0}' ${DYN_DIR}/EXTENT_COUNT`
+do
+  echo  "EXTENT_THRESHOLD_FAIL: ${ORA_SID}, ${i}"  >> ${LOGFILE}
+done
+}
+
+#::::::::::::::::::::::::::::::
+# funct_chk_bkup_dir(): Create directories if not already exist
+#::::::::::::::::::::::::::::::
+funct_chk_bkup_dir() {
+
+  LOGFILE="${LOGDIR}/${ORA_SID}.log"
+
+  if  [ ! -d  ${DYN_DIR} ]; then  mkdir -p  ${DYN_DIR}; fi
+  if  [ ! -d  ${LOGDIR} ]; then  mkdir -p  ${LOGDIR}; fi
+
+  echo `date` >> ${LOGFILE}
+  echo "Checking ${ORA_SID} for segments which are extended beyond ${ECOUNT} extents" >> ${LOGFILE}
+}  
+
+#::::::::::::::::::::::::::::::
+# funct_chk_parm():  Check for input parameters
+#::::::::::::::::::::::::::::::
+funct_chk_parm() {
+if [ ${NARG} -ne 1 ]; then
+     echo "EXTENT_THRESHOLD_FAIL: Not enough argements passed"
+     exit 1
+fi
+}
+
+#:::::::::::::::::::::::::
+# funct_cleanup(): Cleanup activities
+#:::::::::::::::::::::::::
+funct_cleanup(){
+rm -f ${DYN_DIR}/EXTENT_COUNT
+} 
+
+#::::::::::::::::::::::::::
+#  Main
+#::::::::::::::::::::::::::
+NARG=$#
+ECOUNT=$1
+
+# Set up the environment
+ORATABDIR=/etc/oratab
+TOOLS="/u01/oracomn/admin/my_dba"
+
+DYN_DIR="${TOOLS}/DYN_FILES"
+LOGDIR="${TOOLS}/localog"
+
+
+for ORA_SID in `sed /#/d ${ORATABDIR}|awk -F:  '{print $1}'`
+do
+  ORA_HOME=`sed /#/d ${ORATABDIR}|grep $ORA_SID|awk -F: '{print $2}'`
+  ORACLE_SID=${ORA_SID};  export ORACLE_SID
+  ORACLE_HOME=${ORA_HOME};  export ORACLE_HOME
+
+  funct_chk_parm
+  funct_chk_bkup_dir
+
+  STATUS=`ps -ef | grep -v grep | grep ora_pmon_${ORA_SID}`
+  if [ $? != 0 ]; then
+      echo "DATABASE_DOWN: Can't Check extent count for ${ORA_SID}" >> ${LOGFILE}
+  else
+    funct_extentcount
+    funct_cleanup
+  fi
+done
+
+#:::::::::::::: END MAIN :::::::::::::::::::::::::::::
+

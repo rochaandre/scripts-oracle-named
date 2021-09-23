@@ -1,0 +1,63 @@
+################################################################
+# Prog Name:  connect_check
+# Purpose:    Checks DB and Listener connectivity 
+# Usage:      connect_check
+################################################################
+
+#:::::::::: Checks database connectivity
+funct_chk_connect(){
+TCOUNT=`${ORACLE_HOME}/bin/sqlplus -s <<EOF 
+internal
+set heading off feedback off
+select count(dummy) from dual;
+exit
+EOF`
+
+if [ ${TCOUNT} != 1 ]; then
+     echo "DB_CONNECT_FAIL: ${ORA_SID}, DB connectivity check failed" >> ${LOGFILE}
+     exit 1
+fi 
+
+${ORACLE_HOME}/bin/tnsping ${ORA_SID} 
+if [ $? != 0 ]; then
+     echo "DB_LISTENER_FAIL: ${ORA_SID}, DB Listener check failed" >> ${LOGFILE}
+     exit 1
+fi 
+
+}
+
+#::::::::::: Create directories if not already exist
+funct_chk_bkup_dir() {
+
+  LOGFILE="${LOGDIR}/${ORA_SID}.log"
+
+  if  [ ! -d  ${DYN_DIR} ]; then  mkdir -p  ${DYN_DIR}; fi
+  if  [ ! -d  ${LOGDIR} ]; then  mkdir -p  ${LOGDIR}; fi
+
+   echo `date` >> ${LOGFILE}
+   echo "Checking ${ORA_SID} for DB connectivity"  >> ${LOGFILE}
+}  
+
+
+#::::::::::::::::::::::::::
+#  Main
+#::::::::::::::::::::::::::
+# Set up the environment
+ORATABDIR=/etc/oratab
+TOOLS="/u01/oracomn/admin/my_dba"
+
+DYN_DIR="${TOOLS}/DYN_FILES"
+LOGDIR="${TOOLS}/localog"
+
+for ORA_SID in `sed /#/d ${ORATABDIR}|awk -F: '{print $1}'`
+do
+  ORA_HOME=`sed /#/d ${ORATABDIR}|grep $ORA_SID|awk -F: '{print $2}'`
+  ORACLE_SID=${ORA_SID}
+  ORACLE_HOME=${ORA_HOME}
+
+  funct_chk_bkup_dir
+  funct_chk_connect
+
+  echo "Connectivity check successful "  >> ${LOGFILE}
+done
+#:::::::::::::: END MAIN :::::::::::::::::::::::::::::

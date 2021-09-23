@@ -1,0 +1,55 @@
+accept vusuario prompt 'Informe o usuário: '
+accept vsenha   prompt 'Informe a senha: ' hide
+clear scre
+spool c:\coleta.txt
+
+prompt CCBS - 10.11.255.21
+connect &vusuario/&vsenha@ccbs
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+prompt COLL - 10.21.25.59
+connect &vusuario/&vsenha@COLL
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+prompt DBMIS - 10.11.255.96
+connect &vusuario/&vsenha@DBMIS
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+prompt DBPD001 - 10.11.255.64
+connect &vusuario/&vsenha@DBPD001
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+prompt DBPDCOLL - 10.11.255.97
+connect &vusuario/&vsenha@DBPDCOLL
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+prompt DBVESP_P - 10.24.2.85
+connect &vusuario/&vsenha@DBVESP_P
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+prompt RJGIS - 10.11.255.32
+connect &vusuario/&vsenha@RJGIS
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+prompt SAM - 10.11.255.35
+connect &vusuario/&vsenha@SAM
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+prompt SAP-SP - 10.11.255.99
+connect &vusuario/&vsenha@PSP
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+prompt SAP-RJ - 10.21.25.55
+connect &vusuario/&vsenha@PRJ
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+prompt MSPR - 10.21.25.53
+connect &vusuario/&vsenha@MSPR
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+prompt VSPICS - 10.11.255.100
+connect &vusuario/&vsenha@vspics
+@C:\Barcelos\Oracle\Scripts\+usados\comandos
+
+spool off
+disconnect

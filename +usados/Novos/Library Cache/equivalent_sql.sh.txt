@@ -1,0 +1,43 @@
+###############################################################################
+#
+# Synopsis:	equivalent_sql.sh
+# Purpose:	to check for logically equivalent SQL in the library cache
+#
+# Copyright:	(c) Ixora Pty Ltd
+# Author:	Steve Adams
+#
+# Description:	If there are logically equivalent SQL statements in the
+#		library cache, this script prints out a shareable form of
+#		each such statement.
+#
+###############################################################################
+
+print '
+    set pagesize 0
+    set linesize 1060
+    set feedback off
+    select kglnaobj from sys.x_$kglcursor where kglhdadr = kglhdpar;
+    exit
+' |
+sqlplus -s / |
+tr '[A-Z]' '[a-z]' |
+sed '
+    s/\/\*[^*/]*\*\///g
+    s/"//g'"
+    s/'[^']*'/:x/g"'
+    s/^[ ]*//
+    s/[ ]*$//
+    s/[ ]*\([-+*/(<=>),%; ]\)[ ]*/\1/g
+    s/[ ]*\([<>!:]=\)[ ]*/\1/g
+    s/[ ]*<>[ ]*/<>/g
+    s/[ ]*||[ ]*/||/g
+    s/[ ]*\.\.[ ]*/../g
+    s/:[0-9a-z][0-9a-z]*/:x/g
+    s/\([(, .=><*/+-]\)[0-9][0-9]*\([,;) .=><*/+-]\)/\1:x\2/g
+    s/\([(, .=><*/+-]\)[0-9][0-9]*\([,;) .=><*/+-]\)/\1:x\2/g
+    s/:/ :/g
+    s/[ ][ ]*/ /g' |
+sort |
+uniq -c |
+awk '$1 > 1'
+

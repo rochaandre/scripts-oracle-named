@@ -1,0 +1,5 @@
+file= %BACKUP_DIR%\export.dmp
+log= %BACKUP_DIR%\export.log
+full=y 
+compress=n
+consistent=y

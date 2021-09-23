@@ -1,0 +1,106 @@
+select dname, sum(sal) as dept_total
+from emp, dept
+where emp.deptno = dept.deptno
+group by dname having sum(sal) >
+(select sum(sal)*1/3
+from emp,dept
+where emp.deptno = dept.deptno)
+order by sum(sal) desc;
+
+
+
+with summary as
+(select dname, sum(sal) as dept_total
+from emp, dept
+where emp.deptno = dept.deptno
+group by dname)
+select dname, dept_total
+from summary
+where dept_total >
+(select sum(dept_total) * 1/3
+from summary)
+order by dept_total desc;
+
+******************
+
+select ename, emp.deptno, dname
+from emp, dept
+where emp.deptno = dept.deptno
+and dept.deptno > 10;
+
+select ename, emp.deptno, dname
+from emp join dept
+on emp.deptno = dept.deptno;
+
+******************
+Product Cartesian
+======================
+select ename, deptno, dname
+from emp natural join dept;
+
+******************
+
+select a.col1, b.col2
+from example_1 a , example_2 b;
+
+select col1, col2 
+for example_1 cross join example_2;
+
+
+***********************
+Outer Join
+======================
+select e.ename, e.deptno, d.dname
+from dept d, emp e
+where d.deptno = e.deptno;
+
+select e.ename, e.deptno, d.dname
+from dept d, emp e
+where d.deptno (+) = e.deptno;
+
+select e.ename, e.deptno, d.dname
+from dept d, emp e
+where d.deptno = e.deptno (+);
+***********************
+select e.ename, e.deptno, d.dname
+from dept d, emp e
+where d.deptno (+) = e.deptno;
+
+select e.ename, e.deptno, d.dname
+from emp e left outer join dept d
+on d.deptno = e.deptno;
+
+select e.ename, e.deptno, d.dname
+from dept d, emp e
+where d.deptno = e.deptno (+);
+
+select e.ename, e.deptno, d.dname
+from emp e right outer join dept d
+on d.deptno = e.deptno;
+
+***********************
+Full Outer Join
+======================
+select e.ename, e.deptno, d.dname
+from emp e full outer join dept d
+on d.deptno = e.deptno;
+
+***********************
+Self-join
+======================
+ select e.empno, e.ename, e.job
+ from emp e, emp e2
+ where e.empno <> e2.empno
+ and e.ename = e2.ename
+ and e.job = e2.job
+ and e.mgr = e2.mgr;
+
+ select e.empno, e.ename, e.job
+ from emp e join emp e2
+ on e.empno <> e2.empno
+ and e.ename = e2.ename
+ and e.job = e2.job
+ and e.mgr = e2.mgr;
+
+
+

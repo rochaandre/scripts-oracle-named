@@ -1,0 +1,54 @@
+create tablespace ts_rman
+datafile '/oracle/PRD/sapdata115/ts_rman01.dbf'size 20m 
+default storage
+(initial 100k next 100k pctincrease 0)
+
+create tablespace tools
+datafile  '/u01/app/oracle/oradata/OEMREP/tools01.dbf' size 10000m
+extent management local
+uniform size 1024k;
+
+
+CREATE USER rman IDENTIFIED BY cat
+TEMPORARY TABLESPACE psaptemp
+DEFAULT TABLESPACE ts_rman 
+QUOTA UNLIMITED ON ts_rman;
+
+GRANT RECOVERY_CATALOG_OWNER TO rman;
+
+GRANT CONNECT, RESOURCE TO rman;
+
+
+% rman CATALOG rman/cat@catdb
+
+ou
+
+% rman
+RMAN> CONNECT CATALOG rman/cat@catdb
+
+CREATE CATALOG;
+
+OBS: Para apagar catálog: DROP CATALOG;
+
+
+conn rman@oemrep/cat
+SELECT TABLE_NAME FROM USER_TABLES;
+
+
+
+
+% rman TARGET / CATALOG rman/cat@catdb 
+
+
+
+
+
+*************************
+(Oracle 8.0.x)
+
+svrmgrl> connect rman/rman@rcat
+
+svrmgrl> @?/rdbms/admin/catrman.sql
+
+rman target sys/sysnovo@prd rcvcat rman/cat@prd
+

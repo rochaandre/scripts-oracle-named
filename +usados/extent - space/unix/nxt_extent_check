@@ -1,0 +1,86 @@
+################################################################
+# Prog Name:  nxt_extent_check
+# Purpose:    Checks for tables which are prone to fail for lack
+#             of enough space for next extent
+# Usage:      nxt_extent_check
+##################################################################
+
+#:::::::::::::::::::::::
+# funct_NEXTspacecheck(): Check space for next extent
+#::::::::::::::::::::::::
+funct_NEXTspacecheck(){
+${ORACLE_HOME}/bin/sqlplus -s <<EOF >${DYN_DIR}/EXTENTS
+/ as sysdba
+set heading off  feedback off
+SELECT 'Tablespace:'||tablespace_name||','||
+       'Owner:'||owner||','||
+       'Name:'||segment_name||','||
+       'Type:'||segment_type||','||
+       'Next:'||next_extent
+FROM   dba_segments     OUTER
+WHERE owner not in ('SYSTEM','SYS')
+AND NOT EXISTS ( SELECT 'X'
+                    FROM   dba_free_space INNER
+                    WHERE  OUTER.tablespace_name = INNER.tablespace_name
+                    AND    bytes >= next_extent )
+/
+exit
+EOF
+
+for i  in `awk '{print $0}' ${DYN_DIR}/EXTENTS`
+do
+  echo  "EXTENT_FAIL: ${ORA_SID}, ${i}"  >> ${LOGFILE}
+done
+} 
+
+#::::::::::::::::::::::::::::::
+# funct_chk_bkup_dir(): Create directories if not already exist
+#::::::::::::::::::::::::::::::
+funct_chk_bkup_dir() {
+
+  LOGFILE="${LOGDIR}/${ORA_SID}.log"
+
+  if  [ ! -d  ${DYN_DIR} ]; then  mkdir -p  ${DYN_DIR}; fi
+  if  [ ! -d  ${LOGDIR} ]; then  mkdir -p  ${LOGDIR}; fi
+
+  echo `date` >> ${LOGFILE}
+  echo "Checking ${ORA_SID} for possible next extent failures" >> ${LOGFILE}
+}  
+
+#:::::::::::::::::::::::::
+#funct_cleanup(): Cleanup activities
+#:::::::::::::::::::::::::
+funct_cleanup(){
+rm -f ${DYN_DIR}/EXTENTS
+} 
+
+#::::::::::::::::::::::::::
+#  Main
+#::::::::::::::::::::::::::
+# Set up the environment
+ORATABDIR=/etc/oratab
+TOOLS="/u01/oracomn/admin/my_dba"
+
+DYN_DIR="${TOOLS}/DYN_FILES"
+LOGDIR="${TOOLS}/localog"
+
+for ORA_SID in `sed /#/d ${ORATABDIR}|awk -F:  '{print $1}'`
+do
+  ORA_HOME=`sed /#/d ${ORATABDIR}|grep $ORA_SID|awk -F: '{print $2}'`
+  ORACLE_SID=${ORA_SID};  export ORACLE_SID
+  ORACLE_HOME=${ORA_HOME};  export ORACLE_HOME
+
+  funct_chk_bkup_dir
+  
+  STATUS=`ps -ef | grep -v grep | grep ora_pmon_${ORA_SID}`
+  if [ $? != 0 ]; then
+     echo "DATABASE_DOWN: Can't check next extent failures for ${ORA_SID}" >> ${LOGFILE}
+  else
+     funct_NEXTspacecheck 
+     funct_cleanup
+  fi
+done
+
+#:::::::::::::: END MAIN :::::::::::::::::::::::::::::
+
+

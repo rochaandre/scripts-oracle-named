@@ -1,0 +1,52 @@
+###############################################################################
+#
+# Synopsis:	hold_logs_open.sh instance
+# Purpose:	to hold the log files open to accelerate log switches
+#
+# Copyright:	(c) Ixora Pty Ltd
+# Author:	Steve Adams with acknowledgements to Chris Bunting
+#
+###############################################################################
+
+if [ $# -ne 1 ]
+then
+    echo "Usage: hold_logs_open instance" >&2
+    exit 1
+fi
+instance=$1
+
+ORACLE_SID=$1
+ORAENV_ASK=NO
+. oraenv
+
+fd=3
+echo '
+    set pages 0 feedback off
+    select member from v$logfile;
+    prompt End-of-Files
+' |
+sqlplus -s internal |
+while read logfile
+do
+    if [ "$logfile" = End-of-Files ]
+    then
+        if [ "$fd" -gt 3 ]
+        then
+            sleep 86460 &
+        fi
+        exit 0
+    fi 
+    eval "exec $fd<$logfile"
+    fd=`expr $fd + 1`
+#
+#   Uncomment these lines if your shell only supports input redirection
+#   for single digit file descriptors.
+#
+#    if [ "$fd" -eq 10 ]
+#    then
+#        sleep 86460 &
+#        fd=3
+#    fi
+done
+
+

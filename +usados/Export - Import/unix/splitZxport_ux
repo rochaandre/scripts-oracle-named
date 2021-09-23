@@ -1,0 +1,158 @@
+#!/bin/ksh
+######################################################################
+# PROGRAM NAME: 	splitZxport_ux                               
+# PURPOSE: 		Performs export of the database 
+#                       Compresses the export file on the fly while splitting.
+#                       Useful if the size of export file goes beyond 2GB
+# USAGE: 		splitZxport_ux SID OWNER
+######################################################################
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_verify():  Verify that database is online               
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_verify(){
+  STATUS=`ps -fu ${ORA_OWNER} |grep -v grep| grep ora_pmon_${ORA_SID}`
+   funct_chk_unix_command_status  "Database is down for given SID($ORA_SID),Owner($ORA_OWNER). Can't perform export "
+} 
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_cleanup(): Cleanup interim files
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_cleanup() {
+rm -f $PIPE_DEVICE
+rm -f $SPLIT_PIPE_DEVICE
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_splitcompress_pipe(): Creates pipe for compressing and splitting of file
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_splitcompress_pipe() {
+# Creates pipe for compressing
+if [ ! -r ${PIPE_DEVICE} ]; then          
+   /etc/mknod  ${PIPE_DEVICE} p
+fi
+
+#Creates pipe for splitting 
+if [ ! -r ${SPLIT_PIPE_DEVICE} ]; then          
+     /etc/mknod  ${SPLIT_PIPE_DEVICE} p
+fi
+
+# Splits the file for every 500MB
+# As it splits it adds aa,bb,cc ... zz to the name
+nohup split -b10k - ${ZFILE} < ${SPLIT_PIPE_DEVICE} & 
+nohup compress < ${PIPE_DEVICE} >${SPLIT_PIPE_DEVICE} & 
+} 
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_build_parfile(): Creates parameter file
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_build_parfile() {
+# This line makes sure that it always creates a new parameter file
+echo " " >${PARFILE}
+echo "userid=system/manager">>${PARFILE}
+echo "Full=Y">>${PARFILE}
+#echo "tables=scott.t1">>${PARFILE}
+#echo "owner=scott">>${PARFILE}
+echo "Grants=Y">>${PARFILE}
+echo "Indexes=Y">>${PARFILE}
+echo "Rows=Y">>${PARFILE}
+echo "Constraints=Y">>${PARFILE}
+echo "Compress=N">>${PARFILE}
+echo "Consistent=Y">>${PARFILE}
+echo "File=${PIPE_DEVICE}">>${PARFILE}
+echo "Log=${EXPORT_DIR}/${ORA_SID}.exp.log">>${PARFILE}
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_export(): Export the database
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_export() {
+# Remove old export file
+rm -f  ${ZFILE}
+
+${ORACLE_HOME}/bin/exp parfile=${PARFILE}
+if [ $? != 0 ]; then
+      echo `date`  >> $LOGDIR/${ORA_SID}.log
+      echo "EXPORT_FAIL: ${ORA_SID}, Export Failed"  >> $LOGDIR/${ORA_SID}.log
+      funct_cleanup
+      exit 1
+fi 
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_parm(): Check for input parameters
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_parm() {
+if [ ${NARG} -ne 2 ]; then
+  echo "EXPORT_FAIL: ${ORA_SID}, Not enough arguments passed"
+  exit 1
+fi
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_bkup_dir(): Create backup directories if not already existing
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_bkup_dir() {
+  EXPORT_DIR=${BACKUPDIR}
+  if  [ ! -d  ${EXPORT_DIR} ]; then  mkdir -p  ${EXPORT_DIR}; fi
+  if  [ ! -d  ${DYN_DIR} ]; then  mkdir -p  ${DYN_DIR}; fi
+  if  [ ! -d  ${LOGDIR} ]; then  mkdir -p  ${LOGDIR}; fi
+  ZFILE="${EXPORT_DIR}/${ORA_SID}.dmp.Z"
+}
+
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_get_vars(): Get environment variables
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_get_vars(){
+ORA_HOME=`sed  /#/d  ${ORATABDIR}|grep -i  ${ORA_SID}|nawk -F ":"  '{print $2}'`
+ORA_BASE=`echo ${ORA_HOME}|nawk -F "/"  '{for (i=2; i<=NF-2; i++) print "/"$i}'`
+ORACLE_BASE=`echo $ORA_BASE|tr -d " "`
+ORACLE_HOME=${ORA_HOME}; export ORACLE_HOME
+ORACLE_SID=${ORA_SID}; export ORACLE_SID
+} 
+      
+#:::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+# funct_chk_unix_command_status(): Check exit status of Unix command
+#::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::::
+funct_chk_unix_command_status() {
+   if [ $? != 0 ]; then
+            echo  "`date`" >> ${LOGDIR}/${ORA_SID}.log
+            echo  "EXPORT_FAIL:  ${1}  "  >> ${LOGDIR}/${ORA_SID}.log
+            exit 1
+   fi
+}  
+
+#######################################
+#           MAIN
+#######################################
+NARG=$#
+ORA_SID=$1
+ORA_OWNER=$2
+
+# Set up environment
+BACKUPDIR="/u02/${ORA_SID}/export"
+ORATABDIR=/etc/oratab 
+TOOLS="/u01/oracomn/admin/my_dba"
+
+DYN_DIR="${TOOLS}/DYN_FILES"
+PARFILE="${DYN_DIR}/export.par" 
+LOGDIR="${TOOLS}/localog"
+
+PIPE_DEVICE="/tmp/export_${ORA_SID}_pipe"
+SPLIT_PIPE_DEVICE="/tmp/split_${ORA_SID}_pipe"
+
+   echo "... Now exporting ....  ${ORA_SID}"
+
+        funct_chk_parm
+        funct_get_vars
+        funct_verify
+        funct_chk_bkup_dir
+        funct_splitcompress_pipe
+        funct_build_parfile
+        funct_export
+        funct_cleanup
+        
+   echo `date`  >> $LOGDIR/${ORA_SID}.log
+   echo "${ORA_SID}, export completed successfully"  >> $LOGDIR/${ORA_SID}.log
+
+#######################  END MAIN ###############################
