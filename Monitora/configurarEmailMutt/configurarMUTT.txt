@@ -1,0 +1,30 @@
+echo "" | mutt -s techmaxconsultoria'||''''||' -- NEED ATTENTION - database with error in last backup '||''''|| '    -a bdo211srvoracle02/list_rmanbkp01_bdo211.html -a bdo211srvoracle02/list_rman_backupspfile01_bdo211.html -a bdo211srvoracle02/list_rman_backupsize01_bdo211.html -a bdo211srvoracle02/list_rman_backupset01_bdo211.html -a bdo211srvoracle02/list_rman_backuppiece01_bdo211.html -a bdo211srvoracle02/list_rman_backupjob01.sql_bdo211.html  --  test@gmailx.com
+
+yum install mutt -y
+mkfifo /var/spool/postfix/public/pickup
+service postfix restart
+
+mkdir -p ~/.mutt/cache/headers
+mkdir ~/.mutt/cache/bodies
+touch ~/.mutt/certificates
+
+touch ~/.mutt/muttrc
+vim ~/.mutt/muttrc
+
+echo "Body Message" | mutt -s "Testing Email from mutt" techmaxconsultoria@gmail.com anexo.txt
+echo "Body Message" | mutt -s "Testing Email from mutt" techmaxconsultoria@gmail.com
+##################################################
+ set from = "rockmonitor01@gmail.com"
+set realname = "Rockmon"
+# IMAP settings
+set imap_user = "rockmonitor01@gmail.com"
+set imap_pass = "Master123!"
+# SMTP settings
+set smtp_url = "smtps://rockmonitor01@smtp.gmail.com"
+set smtp_pass = "Master123!"
+# Remote Gmail folders
+set folder = "imaps://imap.gmail.com/"
+set spoolfile = "+INBOX"
+set postponed = "+[Gmail]/Drafts"
+set record = "+[Gmail]/Sent Mail"
+set trash = "+[Gmail]/Trash"
